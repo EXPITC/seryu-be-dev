@@ -1,0 +1,24 @@
+#MAC: 
+
+brew install postgresql
+brew services start postgresql / postgresql@14
+psql postgres
+CREATE USER postgres WITH SUPERUSER
+\q
+sudo su
+psql -U postgres
+CREATE DATABASE seryu_dev;
+CREATE USER exp1tc WITH PASSWORD '<><><>';
+GRANT ALL PRIVILEGES ON DATABASE seryu_dev TO exp1tc;
+psql -U exp1tc -d seryu_dev -a -f migration.sql
+
+//import csv/seed the data free use anything u want
+
+
+set .env
+DATABASE_URL="postgresql://exp1tc:<><><>@localhost:5432/seryu_dev?schema=public"
+pnpm i
+pnpm prisma db pull // constraints warning will popup its fine, cause we setup constraints by manual. this warning just tell that prisma currently not yet handle those constraints condition, everything will return err and prohibited while not required with our constraints. dont worry bout the warning not harm. :)
+
+
+

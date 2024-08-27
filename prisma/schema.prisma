@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model driver_attendances {
+  id                Int      @id @default(autoincrement())
+  driver_code       String?  @db.VarChar(255)
+  attendance_date   DateTime @db.Date
+  attendance_status Boolean
+  drivers           drivers? @relation(fields: [driver_code], references: [driver_code], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([driver_code, attendance_date], map: "unique_attendance")
+  @@index([driver_code])
+  @@index([attendance_date])
+  @@index([attendance_status])
+}
+
+model drivers {
+  id                 Int                  @id @default(autoincrement())
+  driver_code        String               @unique @db.VarChar(255)
+  name               String               @db.VarChar(255)
+  driver_attendances driver_attendances[]
+  shipment_costs     shipment_costs[]
+
+  @@index([driver_code])
+  @@index([name])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model shipment_costs {
+  id          Int        @id @default(autoincrement())
+  driver_code String?    @db.VarChar(255)
+  shipment_no String?    @db.VarChar(255)
+  total_costs Decimal    @db.Decimal(10, 2)
+  cost_status String     @db.VarChar(255)
+  drivers     drivers?   @relation(fields: [driver_code], references: [driver_code], onDelete: NoAction, onUpdate: NoAction)
+  shipments   shipments? @relation(fields: [shipment_no], references: [shipment_no], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([driver_code, shipment_no], map: "unique_shipment_costs")
+  @@index([id])
+  @@index([driver_code])
+  @@index([shipment_no])
+  @@index([total_costs])
+  @@index([cost_status])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model shipments {
+  shipment_no     String           @id @db.VarChar(255)
+  shipment_date   DateTime         @db.Date
+  shipment_status String           @db.VarChar(255)
+  shipment_costs  shipment_costs[]
+
+  @@index([shipment_no])
+  @@index([shipment_date])
+  @@index([shipment_status])
+}
+
+model variable_configs {
+  key   String @id @db.VarChar(255)
+  value Int?
+
+  @@index([key])
+  @@index([value])
+}
