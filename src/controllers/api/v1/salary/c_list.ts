@@ -3,6 +3,7 @@ import { Decimal } from "@prisma/client/runtime/library";
 import { Z_SalaryDriverList } from "@zodSchema/salary/zDriverSchema";
 import dayjs from "dayjs";
 import { Request, Response } from "express";
+import { defaultErrorHandling } from "utils/defaultErrHandling";
 import { isSearch } from "utils/isSearch";
 // import { z } from "zod";
 
@@ -44,9 +45,9 @@ export const HandleGetSalaryDriverList = async (
     //   search: z.string().optional(),
     //   date: z.string(),
     //   date_to: z.string().optional().nullable(),
-    //   driver_code: z.string().optional().nullable(),
     //   filters: z
     //     .object({
+    //       driver_code: z.string().optional().nullable(),
     //       status: z
     //         .enum(["PENDING", "CONFIRMED", "PAID"])
     //         .optional()
@@ -136,42 +137,70 @@ export const HandleGetSalaryDriverList = async (
           },
         },
       },
-      AND: {
-        ...(filters_shipment_cost?.[input?.filters?.status!] ?? {}),
-        OR: search.isValid
-          ? [
-              {
-                driver_code: {
-                  contains: search.text,
+      AND: [
+        !!input?.filters?.status
+          ? filters_shipment_cost?.[input.filters.status]
+          : {},
+        !!input?.filters?.driver_code
+          ? {
+              driver_code: input.filters.driver_code,
+            }
+          : {},
+        {
+          OR: search.isValid
+            ? [
+                {
+                  driver_code: {
+                    contains: search.text,
+                  },
                 },
-              },
-              {
-                driver_code: {
-                  contains: search.text,
+                {
+                  name: {
+                    contains: search.text,
+                  },
                 },
-              },
-              search.isNumber
-                ? {
-                    shipment_costs: {
-                      some: {
-                        total_costs: search.number,
+                //... add another search by
+                search.isNumber
+                  ? {
+                      shipment_costs: {
+                        some: {
+                          total_costs: search.number,
+                        },
                       },
-                    },
-                  }
-                : {},
-            ]
-          : [],
-      },
+                    }
+                  : {},
+              ]
+            : [],
+        },
+      ],
     };
+
+    const total = (await req.prisma?.drivers.count({ where })) ?? 0;
+
+    // *
+    // === key search: [un comment this]
+    //
+    // const page_size = input?.optional?.page_size ?? 10;
+    // const current = Math.ceil(total / page_size);
+    //
+    // To use seryu pagination structure for use `page_size` and `current` version.
+    // *
 
     const dataRaw =
       (await req.prisma?.drivers.findMany({
         where,
         take: input.pagination.take,
         skip: input.pagination.skip,
-      })) ?? [];
 
-    const total = (await req.prisma?.drivers.count({ where })) ?? 0;
+        // *
+        // === key search: [un comment this]
+        //
+        // take: page_size,
+        // skip: page_size * ((input?.optional?.current ?? 1) - 1),
+        //
+        // To use seryu pagination structure for use `page_size` and `current` version.
+        // *
+      })) ?? [];
 
     const id_drivers = dataRaw.map((d) => d.id);
     const totalShipmentCost = await getTotalShipmentCost(
@@ -211,6 +240,15 @@ export const HandleGetSalaryDriverList = async (
       end,
     ).then((d) => new Map(d));
 
+    const exactDeliveryDate = await getExactRangeDeliverDateDelivery(
+      req,
+      id_drivers,
+      start,
+      end,
+    ).then(
+      (d) => new Map(d.map(({ id_driver, ...rest }) => [id_driver, rest])),
+    );
+
     const data = dataRaw.map(({ id, driver_code, name }) => {
       let shipmentCost = totalShipmentCost.get(id);
       const total_shipmentCost = !!shipmentCost
@@ -225,19 +263,54 @@ export const HandleGetSalaryDriverList = async (
         ),
         ...shipmentCost?.rest,
         ...totalShipment.get(driver_code),
+        ...exactDeliveryDate.get(id),
       };
     });
+
+    let optional: {
+      total_page?: number;
+      total_row?: number;
+      current?: number;
+      page_size?: number;
+    } = {};
+
+    optional.total_page = Math.ceil(total / input.pagination.take);
+    optional.total_row = total;
+    optional.current =
+      optional.total_page -
+      Math.ceil((total - input.pagination.skip) / input.pagination.take) +
+      1;
+    optional.page_size = input.pagination.take;
+
+    // *
+    // === key search: [un comment this]
+    //
+    // optional.total_page = Math.ceil(total / page_size);
+    // optional.total_row = total;
+    // optional.current = current;
+    // optional.page_size = page_size;
+    //
+    // To use seryu pagination structure for use `page_size` and `current` version.
+    // *
 
     return res.status(200).json({
       data,
       total,
+      optional,
     });
   } catch (err) {
-    // return defaultErrorHandling(req, res, err)
+    return defaultErrorHandling(req, res, err);
   }
 };
 
 // ======= Helper Function(lower case first) =====
+/* Why not put try and catch inside the helper function?
+ * The reason is that the parent function that uses the helper can catch the error and return it as an error response (res).
+ *
+ * By breaking the code into modules, other parts of the application can use the same functionality across different areas when needed.
+ * Additionally, by updating the helper function once, all parts of the application will have the same functionality.
+ *
+ */
 
 export const getTotalShipmentCost = async (
   req: Request,
@@ -422,45 +495,73 @@ const getTotalAttendanceSalary = async (
   return total_attendance_salary;
 };
 
-const getRangeDelivery = async (
+const getExactRangeDeliverDateDelivery = async (
   req: Request,
   id_drivers: number[],
   start: string,
   end: string,
 ) => {
-  const date = await req.prisma?.shipments.groupBy({
-    by: ["shipment_date", "shipment_no"],
-    where: {
-      shipment_costs: {
-        some: {
-          drivers: {
-            id: {
-              in: id_drivers,
-            },
+  const exactRangeDeliverDateDelivery: {
+    id_driver: number;
+    firstDelivery:
+      | {
+          shipment_date: Date;
+          shipment_no: string;
+        }
+      | undefined;
+    lastDelivery:
+      | {
+          shipment_date: Date;
+          shipment_no: string;
+        }
+      | undefined;
+  }[] = [];
+  for await (const id of id_drivers) {
+    const date = await req.prisma?.shipments.groupBy({
+      by: ["shipment_date", "shipment_no"],
+      where: {
+        shipment_costs: {
+          some: {
+            drivers: { id },
           },
         },
+        shipment_date: {
+          gte: start,
+          lte: end,
+        },
       },
-    },
-    orderBy: {
-      shipment_date: "asc",
-    },
-  });
+      orderBy: {
+        shipment_date: "asc",
+      },
+    });
+
+    exactRangeDeliverDateDelivery.push({
+      id_driver: id,
+      firstDelivery: date?.[0],
+      lastDelivery: date?.[-1],
+    });
+  }
+
+  return exactRangeDeliverDateDelivery;
 };
 
 /*
-note for return  {
+Note for return  {
    total_row : 35,
    current : 1,
    page_size : 10
  }
 
-its a redundant while it could compress in 'total'
+Its a redundant? while it could be compress in 'total'
 why reason: 
 
-The params pagination "page_size" and "current" is being set as optional, 
-so if the value is null, the default value should be a fixed number (in BE). Decide whether to use 10 or 100; for this example, use 10. The total is 100, so the front end (FE) can easily calculate the 'current' value by dividing 100 by 10, which equals 10. If a value is provided, the FE should already have a divisor; just take the value from the FE and divide it by the total from the back end (BE). This way, the information can be compressed efficiently.
+The params pagination "page_size" and "current" is being set as optional,
+so if the value is null, the default value should be a fixed number (in BE). Decide whether to use 10 or 100; for this example, use 10. The total is 100, so the front end (FE) can easily calculate the 'current' value by dividing 100 by 10, which equals 10 (other than that or next then a value must be given).
+If a value is provided(params), the FE should already have a divisor; just take the value from the FE and divide it by the total from the back end (BE). This way, the information can be compressed efficiently.
 
 Of course, we don't aim for a perfect world, as there might be situations where there are many variables, like with old design patterns. To standardize, just follow the current approach because refactoring costs are higher. This approach is fine for delivery and hitting the target. However, if possible, we should aim to use something more efficient in the future.
 
+
+Even though I still return it according to the requirements in the object key `optional`.
 
 */

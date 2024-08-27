@@ -68,3 +68,16 @@ model variable_configs {
   @@index([key])
   @@index([value])
 }
+
+model log_err_endpoint_access {
+  id       BigInt    @id @default(autoincrement())
+  endpoint String?
+  request  String?   @db.VarChar(255)
+  response String?   @db.VarChar(255)
+  date     DateTime?
+
+  @@index([endpoint])
+  @@index([request])
+  @@index([response])
+  @@index([date])
+}
