@@ -4,6 +4,7 @@
 
 - Ensure you have Homebrew installed. If not, you can get it from [Homebrew's website](https://brew.sh/).
 - Install `pnpm` if you haven’t already. Follow the instructions [here](https://pnpm.io/installation).
+- Install `Postman` if you haven’t already. Follow this [link](https://www.postman.com/workaholicteam/workspace/madeonearthbyhumans/collection/30072772-cd3cc121-15c3-4c2a-940a-79ce787ba1a9?action=share&creator=30072772) to run or test it.
 
 ## PostgreSQL Installation and Configuration
 
